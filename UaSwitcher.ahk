@@ -21,6 +21,7 @@ global lastCorrection := ""
 global lastCorrectionTime := 0
 global russianModeActive := false
 global suppressInput := false
+global onlineEnabled := 1
 
 LoadSettings()
 
@@ -44,6 +45,9 @@ for en, ua in en_to_ua
 
 ; --- РОСІЙСЬКА → АНГЛІЙСЬКА КЛАВІАТУРА ---
 global ru_to_en := Map("й","q","ц","w","у","e","к","r","е","t","н","y","г","u","ш","i","щ","o","з","p","х","[","ъ","]","ф","a","ы","s","в","d","а","f","п","g","р","h","о","j","л","k","д","l","ж",";","э","'","я","z","ч","x","с","c","м","v","и","b","т","n","ь","m","б",",","ю",".")
+global en_to_ru := Map()
+for ru, en in ru_to_en
+    en_to_ru[en] := ru
 
 global currentWord := ""
 
@@ -61,7 +65,6 @@ LoadLearnedWords()
 
 ; --- ОНЛАЙН-ВИЯВЛЕННЯ РОСІЙСЬКОЇ МОВИ ---
 global onlineCache := Map()
-global onlineEnabled := 1
 global lastOnlineRequest := 0
 
 LoadDict(dict, str) {
@@ -104,7 +107,7 @@ for w in StrSplit("ghbdtn|rfr|vyt|ytn|tckb|xtkjdtr|ltkfnm|d[jl|vjq|jy|dtcm|gjxnj
     russianWords[w] := 1
 
 global russianCyrillicWords := Map()
-for w in StrSplit("русский|русская|русское|россия|российский|спасибо|пожалуйста|сейчас|почему|конечно|можно|нужно|хорошо|плохо|работа|работать|говорить|понимать|спрашивать|отвечать|ребенок|деньги|машина|книга|школа|любить|хотеть|помогать", "|")
+for w in StrSplit("русский|русская|русское|россия|российский|спасибо|пожалуйста|сейчас|почему|конечно|можно|нужно|хорошо|плохо|работа|работать|говорить|понимать|спрашивать|отвечать|ребенок|деньги|машина|книга|школа|любить|хотеть|помогать|привет|здравствуйте|добрый|доброе|утро|вечер|ночь|сегодня|завтра|вчера|время|человек|люди|мужчина|женщина|ребята|девушка|парень|семья|друг|подруга|дом|город|страна|мир|жизнь|любовь|вопрос|ответ|слово|язык|говорю|говоришь|говорит|говорим|говорят|думаю|думаешь|думает|знаю|знаешь|знает|понимаю|понимаешь|понимает|делать|сделать|сделал|сделала|сделали|будет|будут|было|были|есть|нет|да|это|этот|эта|эти|того|тебя|тебе|меня|мне|его|ему|она|они|мы|вы|ты|он|когда|тогда|потому|если|чтобы|здесь|там|куда|откуда|почему|зачем|который|которая|которое|которые|ничего|никогда|всегда|только|тоже|очень|может|можете|нельзя|надо|нужно|хочу|хочешь|хочет|хотим|хотят|спасибо|извините|пожалуйста|помоги|помогите|работаю|работает|работают|работал|работала|работали|смотреть|смотри|смотрите|видеть|вижу|видишь|видит|слышать|слышу|слышишь|слышит|писать|пишу|пишешь|пишет|читать|читаю|читаешь|читает|думать|знать|ждать|жду|ждешь|ждет|быстро|медленно|хороший|хорошая|хорошее|плохой|плохая|плохое|большой|маленький|новый|старый|русский|английский|украинский|российский|россия|москва|петербург|деньги|ребенок|дети|учеба|учиться|школа|университет|книга|машина|вода|еда|кофе|чай|пиво|окно|дверь|комната|улица|магазин|работа|компьютер|телефон|интернет|программа|файл|видео|музыка|фильм|игра|вместе|снова|сначала|потом|сейчас|позже|раньше|уже|еще|можно|нужно|нельзя|правильно|неправильно|конечно|возможно|наверное|пожалуй|например|пожалуйста", "|")
     russianCyrillicWords[w] := 1
 
 ; --- ІНІЦІАЛІЗАЦІЯ ЛОГУ (CSV) ---
@@ -135,22 +138,11 @@ HandleChar(char) {
         return
     }
 
-    if RegExMatch(char, "[\s\r\n\t]") {
+    if RegExMatch(char, "[\s.,!?;:()\[\]{}<>]") {
         if (currentWord != "")
             ProcessFullWord(currentWord, char)
         currentWord := ""
         russianModeActive := false
-        return
-    }
-
-    if (GetLayout() = 0x0419) {
-        if !russianModeActive {
-            russianModeActive := true
-            ShowAlert("ПРОГРАМА НЕ ПІДТРИМУЄ МОВУ ОКУПАНТА!")
-        }
-        converted := ConvertWord(ConvertWord(char, ru_to_en), en_to_ua)
-        ReplaceCurrentInput(char, converted, 0x0422)
-        currentWord .= converted
         return
     }
 
@@ -160,46 +152,30 @@ HandleChar(char) {
 ReplaceCurrentInput(original, replacement, targetLayout := 0) {
     global suppressInput
     suppressInput := true
-    Send("{Backspace " StrLen(original) "}")
-    if targetLayout {
-        PostMessage(0x50, 0, targetLayout,, "A")
-        Sleep(60)
+    try {
+        Send("{Backspace " StrLen(original) "}")
+        if targetLayout {
+            PostMessage(0x50, 0, targetLayout,, "A")
+            Sleep(60)
+        }
+        Send(replacement)
+    } finally {
+        suppressInput := false
     }
-    Send(replacement)
-    suppressInput := false
 }
 
 ProcessFullWord(word, triggerChar) {
+    global whitelist, autocorrect, onlineEnabled, enDict, ukDict, learnedEn, learnedUk
     layout := GetLayout()
     wLower := StrLower(word)
 
-    ; --- РОСІЙСЬКА РОЗКЛАДКА: резервний захист для вже набраного слова ---
-    if (layout = 0x0419) {
-        ShowAlert("ПРОГРАМА НЕ ПІДТРИМУЄ МОВУ ОКУПАНТА!")
-        converted := ConvertWord(ConvertWord(word, ru_to_en), en_to_ua)
-        ReplaceCurrentInput(word triggerChar, converted triggerChar, 0x0422)
-        LogAction("", word, "Рос. розкладка -> українська")
-        return
-    }
-
-    if whitelist.Has(wLower)
-        return
-    if autocorrect.Has(wLower) {
-        Send("{Backspace " (StrLen(word) + 1) "}")
-        Send(autocorrect[wLower] triggerChar)
-        LogAction("", word, "Автозаміна -> " autocorrect[wLower])
-        return
-    }
-
-    ; --- РОСІЙСЬКЕ СЛОВО (будь-яка розкладка): блокуємо ---
-    if (russianWords.Has(wLower) || russianCyrillicWords.Has(wLower)) {
+    if IsRussianWord(word, layout) {
         ShowAlert("ПРОГРАМА НЕ ПІДТРИМУЄ МОВУ ОКУПАНТА!")
         LogAction("", word, "Російське слово (заблоковано)")
         return
     }
 
-    ; --- ОНЛАЙН-ВИЯВЛЕННЯ: для слів, яких немає в жодному словнику ---
-    if (onlineEnabled && StrLen(word) >= 3 && HasCyrillic(word) && !enDict.Has(wLower) && !ukDict.Has(wLower) && !learnedEn.Has(wLower) && !learnedUk.Has(wLower)) {
+    if (layout = 0x0422 && onlineEnabled && StrLen(word) >= 3 && HasCyrillic(word) && !enDict.Has(wLower) && !ukDict.Has(wLower) && !learnedEn.Has(wLower) && !learnedUk.Has(wLower)) {
         lang := DetectLanguageOnline(word)
         if (lang = "ru") {
             ShowAlert("ПРОГРАМА НЕ ПІДТРИМУЄ МОВУ ОКУПАНТА!")
@@ -208,41 +184,57 @@ ProcessFullWord(word, triggerChar) {
         }
     }
 
+    if whitelist.Has(wLower)
+        return
+    if autocorrect.Has(wLower) {
+        ReplaceCurrentInput(word triggerChar, autocorrect[wLower] triggerChar)
+        LogAction("", word, "Автозаміна -> " autocorrect[wLower])
+        return
+    }
+
     CheckAndCorrect(word, triggerChar, layout)
 }
 
+IsRussianWord(word, layout) {
+    global russianCyrillicWords, en_to_ru, ua_to_en, ukDict, learnedUk
+    if (layout != 0x0409 && layout != 0x0422)
+        return false
+
+    wLower := StrLower(word)
+    if (layout = 0x0422 && (ukDict.Has(wLower) || learnedUk.Has(wLower)))
+        return false
+    if RegExMatch(wLower, "[ёыэъ]")
+        return true
+
+    if (layout = 0x0409)
+        candidate := ConvertWord(word, en_to_ru)
+    else
+        candidate := ConvertWord(ConvertWord(word, ua_to_en), en_to_ru)
+
+    return russianCyrillicWords.Has(StrLower(candidate))
+}
+
 CheckAndCorrect(word, triggerChar, layout) {
-    global lastCorrection, lastCorrectionTime, learnedEn, learnedUk
+    global lastCorrection, lastCorrectionTime, learnedEn, learnedUk, enDict, ukDict
+    global en_to_ua, ua_to_en
     isEng := (layout = 0x0409)
+    if (!isEng && layout != 0x0422)
+        return
     dict := isEng ? en_to_ua : ua_to_en
     targetLayout := isEng ? 0x0422 : 0x0409
     converted := ConvertWord(word, dict)
     wLower := StrLower(word)
     convLower := StrLower(converted)
-
-    shouldFix := false
-
     if (isEng) {
-        ; Перевіряємо: основний словник + вивчені слова
-        if (ukDict.Has(convLower) || learnedUk.Has(convLower)) {
-            if !enDict.Has(wLower) && !learnedEn.Has(wLower)
-                shouldFix := true
-        } else {
-            shouldFix := ShouldFixFromEn(word, wLower, convLower)
-        }
+        shouldFix := (ukDict.Has(convLower) || learnedUk.Has(convLower))
+            && !enDict.Has(wLower) && !learnedEn.Has(wLower)
     } else {
-        if (enDict.Has(convLower) || learnedEn.Has(convLower)) {
-            if !ukDict.Has(wLower) && !learnedUk.Has(wLower)
-                shouldFix := true
-        } else {
-            shouldFix := ShouldFixFromUa(word, wLower, convLower)
-        }
+        shouldFix := (enDict.Has(convLower) || learnedEn.Has(convLower))
+            && !ukDict.Has(wLower) && !learnedUk.Has(wLower)
     }
 
     if (shouldFix && word != converted) {
-        Send("{Backspace " (StrLen(word) + 1) "}")
-        PostMessage(0x50, 0, targetLayout,, "A"), Sleep(100)
-        Send(converted triggerChar)
+        ReplaceCurrentInput(word triggerChar, converted triggerChar, targetLayout)
         LogAction("", word, "Виправлено -> " converted)
         lastCorrection := converted
         lastCorrectionTime := A_TickCount
@@ -332,7 +324,7 @@ OpenLog() {
 
 ; --- ГРАФІЧНИЙ ІНТЕРФЕЙС ---
 ShowSettingsGUI() {
-    global guiOpen
+    global guiOpen, onlineEnabled, whitelist, autocorrect
     static MainGui := 0
     if MainGui {
         MainGui.Show()
@@ -395,6 +387,7 @@ ShowSettingsGUI() {
 }
 
 AddDataFunc(type, v1, v2, cb) {
+    global whitelist, autocorrect, settingsFile
     if (v1 = "")
         return
     if (type = "White") {
@@ -411,6 +404,7 @@ AddDataFunc(type, v1, v2, cb) {
 }
 
 DelDataFunc(type, sel, cb) {
+    global whitelist, autocorrect, settingsFile
     if (sel = "")
         return
     if (type = "White") {
@@ -429,7 +423,7 @@ ToggleOnline(value) {
 }
 
 LoadSettings() {
-    global onlineEnabled
+    global onlineEnabled, settingsFile, whitelist, autocorrect
     if !FileExist(settingsFile)
         return
     try {

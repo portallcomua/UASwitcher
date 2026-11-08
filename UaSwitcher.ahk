@@ -2,13 +2,23 @@
 #SingleInstance Force
 
 ; --- Автозавантаження та Ярлики ---
+iconFile := A_ScriptDir "\icon.ico"
+shortcutIcon := FileExist(iconFile) ? iconFile : A_ScriptFullPath
 try {
     startupShortcut := A_Startup "\UASwitcherPro.lnk"
     desktopShortcut := A_Desktop "\UASwitcherPro.lnk"
     if !FileExist(startupShortcut)
-        FileCreateShortcut(A_ScriptFullPath, startupShortcut, A_ScriptDir)
+        FileCreateShortcut(A_ScriptFullPath, startupShortcut, A_ScriptDir, "", "", shortcutIcon)
     if !FileExist(desktopShortcut)
-        FileCreateShortcut(A_ScriptFullPath, desktopShortcut, A_ScriptDir)
+        FileCreateShortcut(A_ScriptFullPath, desktopShortcut, A_ScriptDir, "", "", shortcutIcon)
+    shell := ComObject("WScript.Shell")
+    for shortcutPath in [startupShortcut, desktopShortcut] {
+        shortcut := shell.CreateShortcut(shortcutPath)
+        if (shortcut.IconLocation != shortcutIcon) {
+            shortcut.IconLocation := shortcutIcon
+            shortcut.Save()
+        }
+    }
 }
 
 ; --- Файли та Глобальні змінні ---
@@ -27,8 +37,8 @@ LoadSettings()
 
 ; --- Налаштування іконки ---
 ;@Ahk2Exe-SetMainIcon icon.ico
-if FileExist("icon.ico")
-    TraySetIcon("icon.ico")
+if FileExist(iconFile)
+    TraySetIcon(iconFile)
 
 ; --- Меню трею ---
 A_TrayMenu.Delete()
